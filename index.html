@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0ea5e9">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat del Laboratorio de Informática</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <script>
+    // Solo intentamos registrar el Service Worker si estamos en un entorno HTTP/HTTPS válido
+    if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
+      navigator.serviceWorker.register('/service-worker.js')
+        .then(() => console.log('✅ Service Worker registrado'))
+        .catch(err => console.warn('ℹ️ Service Worker omitido en este entorno de vista previa.'));
+    }
+  </script>
+  <script>
+    // Configuración de Tailwind CSS para añadir un color personalizado
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'meduca-green': '#8BC34A', // Color verde caña para mensajes de profesores/administración
+            'private-chat-bg': '#FFD700', // Un color para mensajes privados (ej. amarillo oro)
+            'pinned-message-bg': '#e0f2fe', /* Light blue for pinned messages */
+            'pinned-message-border': '#0ea5e9', /* Blue border for pinned messages */
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .messages-container::-webkit-scrollbar { width: 8px; }
+    .messages-container::-webkit-scrollbar-track { background: #f1f5f9; }
+    .messages-container::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 10px; }
+    .messages-container::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    .hidden { display: none; }
+    .notify-border { animation: blink 1s ease; }
+    @keyframes blink {
+      0% { box-shadow: 0 0 15px #3b82f6; }
+      50% { box-shadow: 0 0 30px #3b82f6; }
+      100% { box-shadow: none; }
+    }
+    /* Estilos para el modal de contraseña y añadir estudiante */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-content {
+      background: white;
+      padding: 2rem;
+      border-radius: 1rem;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+      text-align: center;
+      max-width: 400px;
+      width: 90%;
+    }
+  </style>
+</head>
+<body class="bg-black flex items-center justify-center min-h-screen">
+
+  <!-- Pantalla de bienvenida -->
+  <div id="welcome-screen" class="w-full max-w-md bg-black p-8 rounded-3xl shadow-[0_0_30px_rgba(14,165,233,0.15)] text-center border border-sky-400/20">
+    
+    <!-- Espacio reservado para el logo de la escuela -->
+    <img id="school-logo" src="https://i.postimg.cc/Sx09dc4v/logo.jpg" alt="Logo de la Escuela" class="w-28 h-28 mx-auto mb-4 object-contain rounded-full border-2 border-sky-300/40 bg-white p-1 shadow-[0_0_15px_rgba(186,230,253,0.2)]">
+
+    <!-- Contenedor con espaciado interlineado mínimo (space-y-1) -->
+    <div class="flex flex-col items-center justify-center space-y-1 mb-5">
+        <h2 class="text-xs font-bold text-sky-400 uppercase tracking-widest leading-none">Ministerio de Educación</h2>
+        <h2 class="text-2xl font-black text-white uppercase tracking-tight leading-none">Escuela Bilingüe El Silencio</h2>
+        <h1 class="text-sm font-medium text-sky-100 leading-tight pt-1">Bienvenido al Chat del Laboratorio de Informática</h1>
+    </div>
+    
+    <p class="text-sm text-sky-300 mb-6">Por favor, selecciona tu sala e identifícate.</p>
+
+    <form id="join-form" class="space-y-4">
+      <!-- Selector de sala -->
+      <div>
+        <label for="room-select" class="block text-left font-medium text-sky-300 mb-1">Selecciona tu Sala:</label>
+        <select id="room-select" required class="w-full px-4 py-3 bg-slate-900 text-sky-100 border border-sky-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-400">
+          <option value="" disabled selected>-- Elige un curso --</option>
+          <option value="Tercero_A">Tercero A</option>
+          <option value="Tercero_B">Tercero B</option>
+          <option value="Cuarto_A">Cuarto A</option>
+          <option value="Cuarto_B">Cuarto B</option>
+          <option value="Quinto_A">Quinto A</option>
+          <option value="Quinto_B">Quinto B</option>
+          <option value="Quinto_C">Quinto C</option>
+          <option value="Sexto_A">Sexto A</option>
+          <option value="Sexto_B">Sexto B</option>
+          <option value="Profesores">Profesores</option>
+          <option value="Administracion">Administración</option>
+        </select>
+      </div>
+
+      <!-- Campo nombre (solo estudiantes) -->
+      <div id="name-field">
+        <label for="name-input" class="block text-left font-medium text-sky-300 mb-1">Tu Nombre</label>
+        <input type="text" id="name-input" placeholder="Escribe tu nombre..." class="w-full px-4 py-3 bg-slate-900 text-sky-100 border border-sky-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-400 placeholder-sky-800" autocomplete="off" oninput="this.value = this.value.toUpperCase()">
+      </div>
+
+      <!-- Campo correo (solo profesores y administración) -->
+      <div id="email-field" class="hidden">
+        <label for="email-input" class="block text-left font-medium text-sky-300 mb-1">Correo institucional MEDUCA</label>
+        <input type="email" id="email-input" placeholder="usuario@meduca.edu.pa" class="w-full px-4 py-3 bg-slate-900 text-sky-100 border border-sky-800 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-400 placeholder-sky-800" autocomplete="off">
+      </div>
+
+      <button type="submit" class="w-full bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 px-6 rounded-xl transition duration-200 flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(14,165,233,0.4)]">
+        <i class="ph ph-sign-in"></i>
+        <span>Entrar al Chat</span>
+      </button>
+      <button type="button" id="close-window-btn" class="w-full bg-slate-900 hover:bg-red-600 text-sky-300 hover:text-white font-bold py-3 px-6 rounded-xl border border-sky-800 transition duration-200 flex items-center justify-center gap-2">
+        <i class="ph ph-x"></i>
+        <span>Cerrar</span>
+      </button>
+    </form>
+  </div>
+
+  <!-- Pantalla del chat -->
+  <div id="chat-screen" class="w-full max-w-6xl h-[95vh] flex bg-white rounded-2xl shadow-2xl m-4 hidden">
+    <!-- Sidebar -->
+    <aside class="w-1/3 md:w-1/4 bg-slate-50 rounded-l-2xl border-r border-slate-200 flex flex-col">
+      <div class="p-4 border-b border-slate-200">
+        <h2 class="text-lg font-bold text-slate-800">Participantes</h2>
+        <p id="user-count" class="text-sm text-slate-500">0 en línea</p>
+      </div>
+      <div id="user-list" class="flex-1 overflow-y-auto p-2 space-y-1"></div>
+      
+      <!-- Controles solo para profesores -->
+      <div id="teacher-controls" class="p-4 border-t border-slate-200 space-y-2 hidden">
+          <button id="add-student-btn" class="w-full bg-meduca-green hover:bg-green-600 text-white font-bold py-2 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-2">
+              <i class="ph ph-user-plus"></i>
+              <span>Añadir Estudiante</span>
+          </button>
+          <button id="mute-chat-btn" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-2">
+              <i class="ph ph-speaker-slash"></i>
+              <span>Silenciar Chat</span>
+          </button>
+          <!-- El botón de borrar chat está oculto para estudiantes y visible solo aquí para profes -->
+          <button id="clear-chat-btn" class="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-2">
+            <i class="ph ph-trash"></i>
+            <span>Borrar Chat</span>
+          </button>
+      </div>
+      
+      <div class="p-4 border-t border-slate-200 space-y-2">
+        <button id="leave-btn" class="w-full bg-slate-200 hover:bg-red-100 text-slate-700 hover:text-red-600 font-bold py-2 px-4 rounded-xl transition duration-200 flex items-center justify-center gap-2">
+          <i class="ph ph-sign-out"></i>
+          <span>Salir</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Área del chat -->
+    <div class="w-2/3 md:w-3/4 flex flex-col">
+      <header class="flex items-center justify-between p-4 border-b border-slate-200 bg-white rounded-tr-2xl">
+        <div>
+          <h1 id="room-title" class="text-xl font-bold text-slate-800 truncate"></h1>
+          <p class="text-sm text-slate-600 truncate flex items-center gap-2">
+            <i id="current-user-icon" class="ph text-sky-500"></i>
+            <span id="user-name-display"></span>
+          </p>
+        </div>
+      </header>
+
+      <main class="flex-1 p-6 overflow-y-auto bg-slate-100 relative">
+        <!-- Contenedor para mensajes anclados -->
+        <div id="pinned-messages-container" class="mb-4 space-y-2">
+          <!-- Los mensajes anclados se insertarán aquí -->
+        </div>
+        <!-- Contenedor para mensajes normales -->
+        <div id="messages-container" class="messages-container space-y-4">
+          <!-- Los mensajes normales se insertarán aquí -->
+        </div>
+      </main>
+
+      <footer class="p-4 bg-white border-t border-slate-200 rounded-br-2xl relative">
+        <div id="typing-indicator" class="text-xs text-sky-500 italic mb-1 h-4 absolute -top-5 left-4"></div>
+        <div id="private-chat-indicator" class="text-sm text-slate-600 mb-2 hidden flex items-center justify-between">
+            <span>🔒 Mensaje privado para: <span id="private-recipient-name" class="font-semibold"></span></span>
+            <button id="cancel-private-btn" class="text-red-500 hover:text-red-700 font-semibold text-xs">Cancelar</button>
+        </div>
+        <form id="message-form" class="flex items-center gap-3">
+          <input type="text" id="message-input" placeholder="Escribe tu mensaje..." class="flex-1 w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500" autocomplete="off">
+          <button type="submit" class="bg-sky-500 hover:bg-sky-600 text-white font-bold py-3 px-6 rounded-xl transition duration-200 flex items-center gap-2">
+            <i class="ph ph-paper-plane-tilt"></i>
+            <span>Enviar</span>
+          </button>
+        </form>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Modal de Añadir Estudiante (inicialmente oculto) -->
+  <div id="add-student-modal" class="modal-overlay hidden">
+    <div class="modal-content">
+      <h2 class="text-xl font-bold text-slate-800 mb-4">Añadir Estudiante a la Sala</h2>
+      <p class="text-slate-600 mb-4 text-sm">Escribe el nombre del estudiante para darle acceso inmediato. Asegúrate de que el estudiante lo escriba exactamente igual.</p>
+      <input type="text" id="new-student-input" placeholder="Ej. juan perez" class="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-meduca-green mb-4" autocomplete="off">
+      <div class="flex justify-end gap-2">
+        <button id="cancel-add-student-btn" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 px-4 rounded-xl transition duration-200">Cancelar</button>
+        <button id="confirm-add-student-btn" class="bg-meduca-green hover:bg-green-600 text-white font-bold py-2 px-4 rounded-xl transition duration-200">Añadir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de contraseña (inicialmente oculto) -->
+  <div id="password-modal" class="modal-overlay hidden">
+    <div class="modal-content">
+      <h2 class="text-xl font-bold text-slate-800 mb-4">Confirmar Borrado de Chat</h2>
+      <p class="text-slate-600 mb-4">Introduce la contraseña para borrar todos los mensajes de esta sala.</p>
+      <input type="password" id="password-input" placeholder="Contraseña" class="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-500 mb-4">
+      <div class="flex justify-end gap-2">
+        <button id="cancel-clear-btn" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-2 px-4 rounded-xl transition duration-200">Cancelar</button>
+        <button id="confirm-clear-btn" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-xl transition duration-200">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 🔊 Sonido de notificación -->
+  <audio id="notify-sound" src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" preload="auto"></audio>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getFirestore, collection, doc, addDoc, query, onSnapshot, serverTimestamp, setDoc, deleteDoc, orderBy, getDocs, limitToLast, writeBatch, getDoc, where, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const palabrasProhibidas = ["pendejo","pendeja","idiota","imbécil","imbecil","estúpido","estupido","puta","puto","mierda","chucha","verga","huevón","huevon","mamón","mamon","cabron","cabrona","maricón","maricon","basura","inútil","inutil","careverga","careculo","culiao","culiado","chingada","chingado"];
+
+  // Objeto con las listas de estudiantes por sala
+  const studentLists = {
+    'Tercero_A': [], // ESPERANDO TU LISTA
+    'Tercero_B': [], // ESPERANDO TU LISTA
+    'Cuarto_A': [
+      'joalex', 'yosielys', 'sofia', 'ileyn', 'dayanis', 'uziel',
+      'yadilka', 'azriel', 'yanelis', 'josafat', 'eithan', 'maysha',
+      'yeiko', 'carlos', 'zahir', 'alejandra', 'yermain', 'jeiden',
+      'jahir', 'andrea', 'george', 'dayamara', 'ryan', 'eyner',
+      'danny', 'jhojam', 'amir', 'yameleisi'
+    ],
+    'Cuarto_B': [], // ESPERANDO TU LISTA
+    'Quinto_A': [
+      'kevin', 'obed', 'liam', 'lian', 'mailys', 'vanessa',
+      'anarielys', 'jathmark', 'narjen', 'isaac', 'angelize', 'jorge',
+      'juan', 'angel', 'eliseo', 'oriel', 'evans', 'natanael',
+      'solangel', 'eythan', 'nayshell', 'elisa', 'ameth', 'aimeth',
+      'alma sofia', 'hanen', 'cristobal', 'anyd', 'johan'
+    ],
+    'Quinto_B': [
+      'yamir', 'seineth', 'adianis', 'kasandra', 'elmer', 'kathleen',
+      'esquivel', 'fabián', 'ana', 'delanys', 'eigner', 'ángel',
+      'amanda', 'luz', 'yatsury', 'jafeth', 'ruth', 'rubén',
+      'yisell', 'anyelín'
+    ],
+    'Quinto_C': [], // ESPERANDO TU LISTA
+    'Sexto_A': [
+      'saúl', 'jean', 'dylan', 'elián', 'luisa', 'richard',
+      'josieth', 'carl', 'kimberly', 'johan', 'noah', 'jesús',
+      'leiyci', 'evangeline', 'zahir', 'sandra', 'miguel', 'elianis',
+      'aikzas', 'erick', 'ezequiel', 'jahiel', 'keisha', 'josue',
+      'allen', 'emanuel', 'adid', 'daniel', 'shasnadayra'
+    ],
+    'Sexto_B': [
+      'manuel', 'rosalinda', 'yerald', 'emily', 'akemy', 'jesuri',
+      'omar', 'daniel', 'rachell', 'zair', 'adrian', 'soulhansh',
+      'shanaidys', 'madeline', 'victor', 'eilyn', 'israel', 'benjamín',
+      'eliabeth', 'rodolfo', 'mariam', 'randall', 'alvis', 'aline',
+      'mailyn', 'luis'
+    ]
+  };
+
+  function contienePalabraOfensiva(texto) {
+    return palabrasProhibidas.some(palabra => texto.toLowerCase().includes(palabra));
+  }
+
+  function isTeacherOrAdmin(userName) {
+    if (!userName) return false;
+    const lowerCaseName = userName.toLowerCase();
+    const prefixes = ["profe", "profesora", "profesor", "prof"];
+    return prefixes.some(prefix => lowerCaseName.startsWith(prefix)) || userName.endsWith('@meduca.edu.pa');
+  }
+
+  let app, auth, db;
+  let currentUserId = null, currentRoom = null, userName = null;
+  let unsubscribeMessages = null, unsubscribeUsers = null, unsubscribeRoomStatus = null;
+  let privateRecipientUserId = null, privateRecipientUserName = null;
+  let isAuthReady = false;
+  let isChatMuted = false;
+  let typingTimeout = null;
+
+  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chat-app-local';
+
+  // Referencias DOM
+  const roomSelect = document.getElementById("room-select"), nameField = document.getElementById("name-field"), emailField = document.getElementById("email-field"), nameInput = document.getElementById("name-input"), emailInput = document.getElementById("email-input"), welcomeScreen = document.getElementById("welcome-screen"), chatScreen = document.getElementById("chat-screen"), joinForm = document.getElementById("join-form"), messagesContainer = document.getElementById("messages-container"), pinnedMessagesContainer = document.getElementById("pinned-messages-container"), messageForm = document.getElementById("message-form"), messageInput = document.getElementById("message-input"), notifySound = document.getElementById("notify-sound"), leaveBtn = document.getElementById("leave-btn"), userList = document.getElementById("user-list"), userCount = document.getElementById("user-count"), roomTitle = document.getElementById("room-title"), userNameDisplay = document.getElementById("user-name-display"), currentUserIcon = document.getElementById("current-user-icon"), clearChatBtn = document.getElementById("clear-chat-btn"), passwordModal = document.getElementById("password-modal"), passwordInput = document.getElementById("password-input"), confirmClearBtn = document.getElementById("confirm-clear-btn"), cancelClearBtn = document.getElementById("cancel-clear-btn"), privateChatIndicator = document.getElementById("private-chat-indicator"), privateRecipientNameSpan = document.getElementById("private-recipient-name"), cancelPrivateBtn = document.getElementById("cancel-private-btn"), closeWindowBtn = document.getElementById("close-window-btn");
+  
+  // Referencias para controles de profesor e indicadores
+  const teacherControls = document.getElementById("teacher-controls");
+  const muteChatBtn = document.getElementById("mute-chat-btn");
+  const typingIndicator = document.getElementById("typing-indicator");
+  const addStudentBtn = document.getElementById("add-student-btn");
+  const addStudentModal = document.getElementById("add-student-modal");
+  const newStudentInput = document.getElementById("new-student-input");
+  const cancelAddStudentBtn = document.getElementById("cancel-add-student-btn");
+  const confirmAddStudentBtn = document.getElementById("confirm-add-student-btn");
+
+  async function initFirebase() {
+    try {
+      const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+      if (Object.keys(firebaseConfig).length === 0) {
+        console.error("Firebase config is empty. Using default hardcoded config.");
+        Object.assign(firebaseConfig, { apiKey: "AIzaSyBjd4n9sVkxzYy6-AXHtV93s7pwnkCkejE", authDomain: "chatlab-636ae.firebaseapp.com", projectId: "chatlab-636ae" });
+      }
+
+      app = initializeApp(firebaseConfig);
+      auth = getAuth(app);
+      db = getFirestore(app);
+
+      const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+      await (initialAuthToken ? signInWithCustomToken(auth, initialAuthToken) : signInAnonymously(auth));
+
+      onAuthStateChanged(auth, (user) => {
+        currentUserId = user ? user.uid : null;
+        isAuthReady = !!user;
+      });
+    } catch (error) {
+      console.error("Error initializing Firebase:", error);
+    }
+  }
+
+  window.onload = initFirebase;
+
+  roomSelect.addEventListener("change", () => {
+    const isSpecialRoom = roomSelect.value === "Profesores" || roomSelect.value === "Administracion";
+    nameField.classList.toggle("hidden", isSpecialRoom);
+    emailField.classList.toggle("hidden", !isSpecialRoom);
+  });
+
+  joinForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!isAuthReady) return;
+
+    currentRoom = roomSelect.value;
+    const isSpecialRoom = currentRoom === "Profesores" || currentRoom === "Administracion";
+    userName = (isSpecialRoom ? emailInput.value.trim() : nameInput.value.trim());
+
+    if (!userName) { alert("⚠️ Por favor, introduce tu nombre o correo."); return; }
+
+    // Validación para estudiantes contra la lista
+    if (!isSpecialRoom) {
+      const normalizedUserName = userName.toLowerCase().trim();
+      const isTeacherByName = ['profe ', 'profesor ', 'profesora ', 'profa ', 'prof '].some(prefix => normalizedUserName.startsWith(prefix));
+
+      if (!isTeacherByName) {
+          const roomList = studentLists[currentRoom] || [];
+          let isAllowed = roomList.includes(normalizedUserName);
+
+          // Si no está en la lista local, verificamos en Firebase (Lista en tiempo real)
+          if (!isAllowed) {
+              try {
+                  const extraDocRef = doc(db, `artifacts/${appId}/public/data/extra_students`, currentRoom);
+                  const extraDocSnap = await getDoc(extraDocRef);
+                  if (extraDocSnap.exists()) {
+                      const extraNames = extraDocSnap.data().names || [];
+                      isAllowed = extraNames.includes(normalizedUserName);
+                  }
+              } catch (error) {
+                  console.error("Error verificando estudiantes extra:", error);
+              }
+          }
+
+          if (!isAllowed) {
+            alert("⚠️ Tu nombre no está en la lista. Asegúrate de escribir tu nombre completo, seleccionar la sala correcta o pedirle al Profesor que te añada.");
+            return;
+          }
+      }
+    }
+    
+    // Validación para salas especiales (profesores/admin)
+    if (isSpecialRoom && !userName.endsWith("@meduca.edu.pa")) {
+      alert("⚠️ Solo correos @meduca.edu.pa pueden entrar a esta sala."); return;
+    }
+    
+    messagesContainer.innerHTML = '';
+    pinnedMessagesContainer.innerHTML = '';
+    welcomeScreen.classList.add("hidden");
+    chatScreen.classList.remove("hidden");
+
+    roomTitle.textContent = `Sala: ${currentRoom.replace(/_/g, ' ')}`;
+    userNameDisplay.textContent = userName;
+    const isCurrentUserTeacher = isTeacherOrAdmin(userName);
+    currentUserIcon.className = `ph ${isCurrentUserTeacher ? 'ph-chalkboard-teacher text-meduca-green' : 'ph-user text-sky-500'}`;
+    
+    // Mostrar controles si es profesor
+    teacherControls.classList.toggle('hidden', !isCurrentUserTeacher);
+
+    try {
+      await setDoc(doc(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/users`, currentUserId), { 
+          userName, 
+          joinedAt: serverTimestamp(),
+          status: 'online', // Inicia con punto verde
+          isTyping: false   // Inicia sin escribir
+      });
+      listenForRoomStatus();
+      listenForMessages();
+      listenForUsers();
+      setupActivityListeners(); // Inicia detectores de estado y escritura
+    } catch (error) {
+      console.error("Error joining room:", error);
+      chatScreen.classList.add("hidden");
+      welcomeScreen.classList.remove("hidden");
+    }
+  });
+
+  // Detectar punto verde/amarillo y Escribiendo
+  function setupActivityListeners() {
+      window.addEventListener('blur', async () => {
+          if (!currentRoom || !currentUserId) return;
+          try {
+              // Usamos setDoc con {merge: true} para evitar errores si el documento aún no existe
+              await setDoc(doc(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/users`, currentUserId), { status: 'away', isTyping: false }, { merge: true });
+          } catch(e) { console.warn(e); }
+      });
+      window.addEventListener('focus', async () => {
+          if (!currentRoom || !currentUserId) return;
+          try {
+              await setDoc(doc(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/users`, currentUserId), { status: 'online' }, { merge: true });
+          } catch(e) { console.warn(e); }
+      });
+
+      messageInput.addEventListener('input', async () => {
+          if (!currentRoom || !currentUserId || isChatMuted) return;
+          try {
+              await setDoc(doc(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/users`, currentUserId), { isTyping: true }, { merge: true });
+          } catch(e) { console.warn(e); }
+          
+          if (typingTimeout) clearTimeout(typingTimeout);
+          typingTimeout = setTimeout(async () => {
+              try {
+                  await setDoc(doc(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/users`, currentUserId), { isTyping: false }, { merge: true });
+              } catch(e) { console.warn(e); }
+          }, 2000);
+      });
+  }
+
+  function listenForRoomStatus() {
+    if (!currentRoom) return;
+    if (unsubscribeRoomStatus) unsubscribeRoomStatus();
+    const roomDocRef = doc(db, `artifacts/${appId}/public/data/rooms`, currentRoom);
+    unsubscribeRoomStatus = onSnapshot(roomDocRef, (docSnap) => {
+      isChatMuted = docSnap.exists() ? docSnap.data().isMuted || false : false;
+      updateChatMuteUI();
+    });
+  }
+
+  function updateChatMuteUI() {
+    const isCurrentUserTeacher = isTeacherOrAdmin(userName);
+    const sendButton = messageForm.querySelector('button[type="submit"]');
+
+    const isDisabled = isChatMuted && !isCurrentUserTeacher;
+    messageInput.disabled = isDisabled;
+    sendButton.disabled = isDisabled;
+    messageInput.placeholder = isDisabled ? "El chat está silenciado por el profesor." : "Escribe tu mensaje...";
+    messageForm.classList.toggle('opacity-50', isDisabled);
+
+    if (isCurrentUserTeacher) {
+      const icon = muteChatBtn.querySelector('i');
+      const text = muteChatBtn.querySelector('span');
+      if (isChatMuted) {
+        muteChatBtn.className = muteChatBtn.className.replace('bg-amber-500 hover:bg-amber-600', 'bg-green-500 hover:bg-green-600');
+        icon.className = 'ph ph-speaker-high';
+        text.textContent = 'Reactivar Chat';
+      } else {
+        muteChatBtn.className = muteChatBtn.className.replace('bg-green-500 hover:bg-green-600', 'bg-amber-500 hover:bg-amber-600');
+        icon.className = 'ph ph-speaker-slash';
+        text.textContent = 'Silenciar Chat';
+      }
+    }
+  }
+  
+  muteChatBtn.addEventListener('click', async () => {
+    if (!currentRoom) return;
+    const roomDocRef = doc(db, `artifacts/${appId}/public/data/rooms`, currentRoom);
+    const newMuteStatus = !isChatMuted;
+    try {
+      await setDoc(roomDocRef, { isMuted: newMuteStatus }, { merge: true });
+      const statusMessage = newMuteStatus ? `${userName} ha silenciado el chat.` : `${userName} ha reactivado el chat.`;
+      displaySystemMessage(statusMessage);
+    } catch (error) {
+      console.error("Error toggling mute status:", error);
+    }
+  });
+
+  // Lógica para Añadir Estudiante en Tiempo Real
+  if(addStudentBtn) {
+      addStudentBtn.addEventListener('click', () => {
+        addStudentModal.classList.remove('hidden');
+        newStudentInput.value = '';
+        newStudentInput.focus();
+      });
+  }
+
+  if(cancelAddStudentBtn) {
+      cancelAddStudentBtn.addEventListener('click', () => addStudentModal.classList.add('hidden'));
+  }
+
+  if(confirmAddStudentBtn) {
+      confirmAddStudentBtn.addEventListener('click', async () => {
+        const newName = newStudentInput.value.trim().toLowerCase();
+        if (!newName || !currentRoom) {
+            addStudentModal.classList.add('hidden');
+            return;
+        }
+        
+        try {
+            const extraDocRef = doc(db, `artifacts/${appId}/public/data/extra_students`, currentRoom);
+            const extraDocSnap = await getDoc(extraDocRef);
+            let extraNames = [];
+            if (extraDocSnap.exists()) {
+                extraNames = extraDocSnap.data().names || [];
+            }
+            
+            if (!extraNames.includes(newName)) {
+                extraNames.push(newName);
+                await setDoc(extraDocRef, { names: extraNames }, { merge: true });
+                displaySystemMessage(`✅ El profesor ${userName} ha dado acceso al estudiante: ${newName}`);
+            } else {
+                alert("Este estudiante ya tiene acceso a la sala.");
+            }
+        } catch (error) {
+            console.error("Error añadiendo estudiante:", error);
+        }
+        
+        addStudentModal.classList.add('hidden');
+      });
+  }
+
+  async function listenForMessages() {
+    if (!isAuthReady || !currentRoom) return;
+    if (unsubscribeMessages) unsubscribeMessages();
+
+    const ref = collection(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/messages`);
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const joinTimestamp = new Date();
+
+    pinnedMessagesContainer.innerHTML = '';
+    messagesContainer.innerHTML = '';
+
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    try {
+        // Limpieza automática. Si es profesor, borra silenciosamente los mensajes de más de 24 horas
+        if (isTeacherOrAdmin(userName)) {
+            const oldMessagesQuery = query(ref, where('createdAt', '<', twentyFourHoursAgo));
+            const oldSnap = await getDocs(oldMessagesQuery);
+            if (!oldSnap.empty) {
+                const batch = writeBatch(db);
+                oldSnap.forEach(d => batch.delete(d.ref));
+                await batch.commit();
+            }
+        }
+
+        // Descargamos el historial limitado
+        const historicalQuery = query(ref, where('createdAt', '>=', twentyFourHoursAgo), orderBy('createdAt', 'asc'));
+        const historicalSnapshot = await getDocs(historicalQuery);
+        historicalSnapshot.forEach(docSnap => {
+            const message = { id: docSnap.id, ...docSnap.data() };
+            const isLinkMessage = message.text && message.text.match(urlRegex);
+            if (!message.isPrivate && isTeacherOrAdmin(message.userName) && isLinkMessage) {
+                displayMessage(message, true);
+            }
+        });
+    } catch (error) {
+        console.error("Error al cargar mensajes anclados:", error);
+    }
+
+    // Escuchar mensajes nuevos en tiempo real
+    const liveQuery = query(ref, where('createdAt', '>', joinTimestamp), orderBy('createdAt', 'asc'));
+
+    unsubscribeMessages = onSnapshot(liveQuery, (snapshot) => {
+        snapshot.docChanges().forEach(async (change) => {
+            const messageId = change.doc.id;
+            const newMessage = { id: messageId, ...change.doc.data() };
+            const isVisible = !newMessage.isPrivate || (newMessage.isPrivate && (newMessage.userId === currentUserId || newMessage.recipientId === currentUserId));
+
+            if (change.type === 'added') {
+                if (isVisible) {
+                    const isPinned = !newMessage.isPrivate && isTeacherOrAdmin(newMessage.userName) && newMessage.text && newMessage.text.match(urlRegex);
+                    displayMessage(newMessage, isPinned);
+                    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+                    if (newMessage.userId !== currentUserId && newMessage.createdAt) {
+                        if (!newMessage.isPrivate || (newMessage.isPrivate && newMessage.recipientId === currentUserId)) {
+                            notifySound.play().catch(e => console.warn("Audio bloqueado temporalmente por el navegador", e));
+                            
+                            // Marca el mensaje como leído (Doble check azul)
+                            if (document.hasFocus() && !newMessage.isRead) {
+                                try {
+                                    // Usamos setDoc con merge en lugar de updateDoc para mayor seguridad
+                                    await setDoc(doc(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/messages`, messageId), { isRead: true }, { merge: true });
+                                } catch(e) { console.warn(e); }
+                            }
+                        }
+                    }
+                }
+            } else if (change.type === 'modified') {
+                // Si la base de datos dice que alguien lo leyó, encender el check azul
+                if (newMessage.isRead) {
+                    const checkElement = document.getElementById(`check-${messageId}`);
+                    if (checkElement) {
+                        const isPrivateColor = newMessage.isPrivate ? 'text-blue-600 font-bold' : 'text-sky-200 font-extrabold';
+                        checkElement.className = `float-right ml-2 mt-1 text-xs tracking-tighter ${isPrivateColor}`;
+                    }
+                }
+            }
+        });
+    }, console.error);
+  }
+
+  function listenForUsers() {
+    if (!isAuthReady || !currentRoom) return;
+    if (unsubscribeUsers) unsubscribeUsers();
+    const ref = collection(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/users`);
+    unsubscribeUsers = onSnapshot(ref, snapshot => {
+      userList.innerHTML = '';
+      const users = [];
+      let typingUsers = []; 
+      
+      snapshot.forEach(docSnap => users.push({ id: docSnap.id, ...docSnap.data() }));
+      const sortedUsers = users.sort((a, b) => (isTeacherOrAdmin(b.userName) - isTeacherOrAdmin(a.userName)) || a.userName.localeCompare(b.userName));
+      
+      sortedUsers.forEach(user => {
+        const userEl = document.createElement('div');
+        const isUserTeacherOrAdmin = isTeacherOrAdmin(user.userName);
+        
+        // Semáforo de atención (Punto Verde/Amarillo)
+        const statusColor = user.status === 'away' ? 'bg-amber-400' : 'bg-green-500';
+        const statusIndicator = `<span class="w-2.5 h-2.5 rounded-full ${statusColor} shrink-0 shadow-sm border border-white" title="${user.status === 'away' ? 'Inactivo/En otra pestaña' : 'Activo'}"></span>`;
+        
+        userEl.className = 'p-2 text-slate-700 bg-white rounded-lg shadow-sm flex items-center gap-2 cursor-pointer hover:bg-slate-100 relative';
+        userEl.dataset.userid = user.id;
+        userEl.dataset.username = user.userName;
+        userEl.innerHTML = `${statusIndicator}<i class="ph ${isUserTeacherOrAdmin ? 'ph-chalkboard-teacher text-meduca-green' : 'ph-user text-sky-500'}"></i><span class="truncate">${user.userName}</span>`;
+        userList.appendChild(userEl);
+
+        // Registro de Escribiendo
+        if (user.isTyping && user.id !== currentUserId) {
+            typingUsers.push(user.userName.split(' ')[0]);
+        }
+      });
+      userCount.textContent = `${sortedUsers.length} en línea`;
+
+      // Mostrar "Escribiendo..."
+      if (typingUsers.length > 0) {
+          const verb = typingUsers.length > 1 ? 'están' : 'está';
+          typingIndicator.textContent = `${typingUsers.join(', ')} ${verb} escribiendo...`;
+      } else {
+          typingIndicator.textContent = '';
+      }
+    }, console.error);
+  }
+
+  userList.addEventListener('click', (e) => {
+    const userEl = e.target.closest('[data-userid]');
+    if (userEl && userEl.dataset.userid !== currentUserId) {
+      const selectedUsername = userEl.dataset.username;
+      const isCurrentUserTeacher = isTeacherOrAdmin(userName);
+      const isSelectedUserTeacher = isTeacherOrAdmin(selectedUsername);
+
+      if (!isCurrentUserTeacher && !isSelectedUserTeacher) {
+        alert("No puedes iniciar un chat privado con otro estudiante.");
+        return;
+      }
+
+      privateRecipientUserId = userEl.dataset.userid;
+      privateRecipientUserName = selectedUsername;
+      privateRecipientNameSpan.textContent = privateRecipientUserName;
+      privateChatIndicator.classList.remove('hidden');
+      messageInput.focus();
+    }
+  });
+
+  cancelPrivateBtn.addEventListener('click', () => {
+    privateRecipientUserId = null;
+    privateRecipientUserName = null;
+    privateChatIndicator.classList.add('hidden');
+  });
+
+  function displayMessage(message, isPinned = false) {
+    const isSenderTeacherOrAdmin = isTeacherOrAdmin(message.userName);
+    const msgEl = document.createElement('div');
+    msgEl.id = `wrapper-${message.id}`;
+    let contentHtml = '';
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const isOwnMessage = message.userId === currentUserId;
+
+    // Función para limpiar HTML y evitar hackeos/XSS
+    const escapeHTML = (str) => {
+        if (!str) return '';
+        return str.replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag]));
+    };
+    
+    let baseClasses = 'max-w-lg p-4 rounded-2xl shadow-sm flex flex-col relative';
+    let alignmentClass = isOwnMessage ? 'self-end' : 'self-start';
+    let colorClass = isOwnMessage ? 'bg-sky-500 text-white' : (isSenderTeacherOrAdmin ? 'bg-meduca-green text-white' : 'bg-slate-200 text-slate-800');
+
+    // Doble Check de Lectura (Visto)
+    let checkIcon = '';
+    if (isOwnMessage && message.type !== 'system' && message.type !== 'alert') {
+        const unreadColor = 'text-white opacity-50';
+        const readColor = message.isPrivate ? 'text-blue-600 font-bold' : 'text-sky-200 font-extrabold';
+        const currentCheckColor = message.isRead ? readColor : unreadColor;
+        checkIcon = `<span id="check-${message.id}" class="float-right ml-2 mt-1 text-xs tracking-tighter ${currentCheckColor}">✓✓</span>`;
+    }
+
+    const safeUserName = escapeHTML(message.userName);
+    const safeRecipientName = escapeHTML(message.recipientName);
+    const safeText = escapeHTML(message.text);
+
+    if (message.isPrivate) {
+        colorClass = 'bg-private-chat-bg text-black border border-amber-400';
+        msgEl.className = `${baseClasses} ${alignmentClass} ${colorClass}`;
+        
+        const privateHeader = isOwnMessage 
+            ? `🔒 Privado para ${safeRecipientName}` 
+            : `🔒 Privado de ${safeUserName}`;
+
+        contentHtml = `<p class="font-bold text-sm mb-1">${privateHeader}</p>`;
+        
+        if (message.type === 'image') {
+            contentHtml += `<img src="${message.imageData}" alt="Imagen privada" class="max-w-xs md:max-w-sm rounded-lg cursor-pointer" onclick="const i=new Image();i.src=this.src;const w=window.open('');w.document.write(i.outerHTML);">${checkIcon}`;
+        } else {
+            contentHtml += `<div class="text-base break-words">${safeText.replace(urlRegex, '<a href="$1" target="_blank" class="text-blue-600 underline">$1</a>')}${checkIcon}</div>`;
+        }
+
+    } else if (message.type === 'system' || message.type === 'alert') {
+        const systemColor = message.type === 'alert' ? 'text-red-600 font-bold' : 'text-slate-500 italic';
+        msgEl.className = `text-center text-sm p-2 ${systemColor}`;
+        contentHtml = `ℹ️ ${safeText}`;
+    } else if (message.type === 'image') {
+        msgEl.className = `${baseClasses.replace('p-4', 'p-2')} ${alignmentClass} ${colorClass}`;
+        contentHtml = `<p class="font-bold text-sm mb-1 px-2 pt-1">${isOwnMessage ? 'Tú' : safeUserName}</p>`;
+        contentHtml += `<img src="${message.imageData}" alt="Imagen de ${safeUserName}" class="max-w-xs md:max-w-sm rounded-lg cursor-pointer" onclick="const i=new Image();i.src=this.src;const w=window.open('');w.document.write(i.outerHTML);">${checkIcon}`;
+    } else if (isPinned) {
+        msgEl.className = `${baseClasses} bg-pinned-message-bg text-slate-800 self-start border-l-4 border-pinned-message-border`;
+        contentHtml = `<p class="font-bold text-sm mb-1 flex items-center gap-1"><i class="ph ph-push-pin-fill text-sky-600"></i> Mensaje Anclado de ${safeUserName}</p>`;
+        contentHtml += `<div class="text-base break-words">${safeText.replace(urlRegex, '<a href="$1" target="_blank" class="text-blue-600 underline">$1</a>')}${checkIcon}</div>`;
+    } else {
+        msgEl.className = `${baseClasses} ${alignmentClass} ${colorClass}`;
+        contentHtml = `<p class="font-bold text-sm mb-1">${isOwnMessage ? 'Tú' : safeUserName}</p>`;
+        contentHtml += `<div class="text-base break-words">${safeText.replace(urlRegex, '<a href="$1" target="_blank" class="text-blue-600 underline">$1</a>')}${checkIcon}</div>`;
+    }
+    
+    msgEl.innerHTML = contentHtml;
+    const container = isPinned ? pinnedMessagesContainer : messagesContainer;
+    container.appendChild(msgEl);
+  }
+
+  async function displaySystemMessage(text) {
+    if (!isAuthReady || !currentRoom) return;
+    await addDoc(collection(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/messages`), { type: 'system', text, createdAt: serverTimestamp() });
+  }
+
+  messageForm.addEventListener("submit", async e => {
+    e.preventDefault();
+    if (isChatMuted && !isTeacherOrAdmin(userName)) return;
+    const texto = messageInput.value.trim();
+    if (!texto || !isAuthReady || !currentRoom) return;
+    if (contienePalabraOfensiva(texto)) {
+      displaySystemMessage(`ALERTA: ${userName} intentó enviar palabras ofensivas.`);
+      messageInput.value = '';
+      return;
+    }
+
+    let messageData = {
+        type: 'text',
+        text: texto,
+        userId: currentUserId,
+        userName,
+        createdAt: serverTimestamp(),
+        isPrivate: false,
+        isRead: false // Inicia como No Leído
+    };
+
+    if (privateRecipientUserId) {
+        messageData.isPrivate = true;
+        messageData.recipientId = privateRecipientUserId;
+        messageData.recipientName = privateRecipientUserName;
+    }
+
+    await addDoc(collection(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/messages`), messageData);
+    
+    messageInput.value = '';
+    
+    if (typingTimeout) clearTimeout(typingTimeout);
+    try {
+        await setDoc(doc(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/users`, currentUserId), { isTyping: false }, { merge: true });
+    } catch(e) { console.warn(e); }
+
+    if (privateRecipientUserId) {
+        privateRecipientUserId = null;
+        privateRecipientUserName = null;
+        privateChatIndicator.classList.add('hidden');
+    }
+  });
+
+  async function handlePaste(e) {
+    const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+    let imageFile = null;
+    for (const item of items) {
+      if (item.type.indexOf('image') === 0) {
+        imageFile = item.getAsFile();
+        break;
+      }
+    }
+
+    if (imageFile) {
+        e.preventDefault(); 
+
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            const imageData = event.target.result;
+            if (!isAuthReady || !currentRoom) return;
+            
+            let messageData = {
+                type: 'image',
+                imageData: imageData,
+                userId: currentUserId,
+                userName: userName,
+                createdAt: serverTimestamp(),
+                isPrivate: false,
+                isRead: false
+            };
+
+            if (privateRecipientUserId) {
+                messageData.isPrivate = true;
+                messageData.recipientId = privateRecipientUserId;
+                messageData.recipientName = privateRecipientUserName;
+                
+                privateRecipientUserId = null;
+                privateRecipientUserName = null;
+                privateChatIndicator.classList.add('hidden');
+            }
+
+            try {
+                await addDoc(collection(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/messages`), messageData);
+            } catch (error) {
+                console.error("Error sending image:", error);
+                displaySystemMessage(`ALERTA: Error al enviar la imagen. Puede que sea demasiado grande.`);
+            }
+        };
+        reader.readAsDataURL(imageFile);
+    }
+  }
+
+  messageInput.addEventListener('paste', handlePaste);
+
+  async function handleUserLeave() {
+    if (currentRoom && currentUserId && isAuthReady) {
+      try {
+        await deleteDoc(doc(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/users`, currentUserId));
+        if (unsubscribeMessages) unsubscribeMessages();
+        if (unsubscribeUsers) unsubscribeUsers();
+        if (unsubscribeRoomStatus) unsubscribeRoomStatus();
+      } catch (error) { console.error("Error on leave:", error); }
+    }
+  }
+
+  leaveBtn.addEventListener('click', async () => {
+    await handleUserLeave();
+    chatScreen.classList.add('hidden');
+    welcomeScreen.classList.remove('hidden');
+    nameInput.value = ''; emailInput.value = ''; roomSelect.value = '';
+    privateRecipientUserId = null; privateRecipientUserName = null;
+    privateChatIndicator.classList.add('hidden');
+  });
+
+  if (closeWindowBtn) {
+      closeWindowBtn.addEventListener('click', () => {
+          window.close();
+          alert("Si la ventana no se cierra automáticamente por la seguridad del navegador, por favor cierra la pestaña manualmente.");
+      });
+  }
+
+  window.addEventListener('beforeunload', () => { if (currentUserId) handleUserLeave(); });
+  window.addEventListener('pagehide', () => { if (currentUserId) handleUserLeave(); });
+
+  clearChatBtn.addEventListener('click', () => {
+    passwordModal.classList.remove('hidden');
+    passwordInput.value = '';
+    passwordInput.focus();
+  });
+
+  cancelClearBtn.addEventListener('click', () => passwordModal.classList.add('hidden'));
+
+  confirmClearBtn.addEventListener('click', async () => {
+    if (passwordInput.value !== "mathias2710") {
+        passwordModal.classList.add('hidden'); return;
+    }
+    passwordModal.classList.add('hidden');
+    if (!isAuthReady || !currentRoom) return;
+    
+    const messagesRef = collection(db, `artifacts/${appId}/public/data/rooms/${currentRoom}/messages`);
+    const querySnapshot = await getDocs(query(messagesRef));
+    if (querySnapshot.empty) return;
+    
+    const batch = writeBatch(db);
+    querySnapshot.forEach(doc => batch.delete(doc.ref));
+    try {
+      await batch.commit();
+      displaySystemMessage("Chat borrado exitosamente.");
+    } catch (error) { console.error("Error clearing chat:", error); }
+  });
+</script>
+</body>
+</html>
